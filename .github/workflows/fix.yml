@@ -1,40 +1,36 @@
-# For more information see: https://github.com/actions/setup-java/blob/main/docs/advanced-usage.md#apache-maven-with-a-settings-path
-name: SAST with Fix
-env:
-  V_ID: ${{ secrets.VERACODE_API_ID }}
-  V_KEY: ${{ secrets.VERACODE_API_KEY }}
-  
+name: verademo
+
 on:
-  pull_request:
-    types:
-      - opened
-#on:
-  #workflow_dispatch
+   push:
+    branches:
+      - main
+   pull_request:
+    branches:
+      - main
 
 jobs:
   build:
     runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-      
     steps:
-    - uses: actions/checkout@v2
-    - name: Set up JDK 11
-      uses: actions/setup-java@v2
+    - uses: actions/checkout@v3
+    - uses: actions/setup-java@v3
       with:
-        java-version: '11'
-        distribution: 'adopt'
-        server-id: github # Value of the distributionManagement/repository/id field of the pom.xml
-        settings-path: ${{ github.workspace }} # location for the settings.xml file
-        
+        distribution: 'zulu'
+        java-version: 8
+    - name: Cache Maven packages
+      uses: actions/cache@v3
+      with:
+        path: ~/.m2
+        key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
     - name: Build with Maven
-      run: mvn -B package --file app/pom.xml
+      run: |
+            cd tests
+            mvn clean package
 
     - uses: actions/upload-artifact@v4
       with:
         name: verademo.war
-        path: app/target/verademo.war 
+        path: tests/target/verademo.war
         
   pipeline_scan:
       needs: build
@@ -48,22 +44,21 @@ jobs:
           uses: actions/download-artifact@v4
           with:
             name: verademo.war
-            
         - name: pipeline-scan action step
           id: pipelien-scan
-          uses: veracode/Veracode-pipeline-scan-action@v1.0.16
+          uses: veracode/Veracode-pipeline-scan-action@esd-true
           with:
-            vid: ${{ secrets.VERACODE_API_ID }}
-            vkey: ${{ secrets.VERACODE_API_KEY }}
+            vid: ${{ secrets.VID }}
+            vkey: ${{ secrets.VKEY }}
             file: "verademo.war" 
+            request_policy: "Veracode Recommended SCA Very Low"
             debug: 1
-            fail_build: false 
+            fail_build: false
+        - uses: actions/upload-artifact@v4
+          with:
+            name: Veracode Pipeline-Scan Results
+            path: results.json 
 
- #       - uses: actions/upload-artifact@v4
- #         with:
- #           name: results.json
- #           path: /home/runner/work/git-veraTest/git-veraTest/filtered_results.json
-            
   veracode-fix:
     runs-on: ubuntu-latest
     needs: pipeline_scan
@@ -76,20 +71,21 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: Veracode Pipeline-Scan Results
-
           
       - name: Create fixes from static findings
         id: convert
-        uses: veracode/veracode-fix@main
+        uses: Veracode/veracode-fix@main
         with:
-          inputFile: filtered_results.json
-          vid: ${{ secrets.VERACODE_API_ID }}
-          vkey: ${{ secrets.VERACODE_API_KEY }}
-          source_base_path_1: "com/:java/com/veracode/verademo"
-          source_base_path_2: "WEB-INF:src/main/webapp/WEB-INF"
+          inputFile: results.json
+          vid: ${{ secrets.VID }}
+          vkey: ${{ secrets.VKEY }}
+          source_base_path_1: "com/:tests/src/main/java/com/"
+          source_base_path_2: "WEB-INF:tests/src/main/webapp/WEB-INF"
           language: java
-          cwe: '117'
           prComment: true
+          cwe: '89,117'
+          DEBUG: true
           fixType: single
-          file: all
-          codeSuggestion: true
+          files: all
+          createPR: true
+          
